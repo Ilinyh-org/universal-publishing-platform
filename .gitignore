@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments and secrets
+.env
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# Local data (SQLite databases, persistent app data)
+data/
+*.db
+*.sqlite3
