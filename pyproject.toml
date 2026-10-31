@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Ilinyh-org" }]
 dependencies = [
     "aiosqlite>=0.20",
+    "alembic>=1.13",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "sqlalchemy[asyncio]>=2.0",
