@@ -41,6 +41,16 @@ Run migrations as a documented deployment step before starting the service; avoi
 
 `src/publisher/services/ingestion.py` implements the ingestion contract of specification §6: each submitted item is processed in its own transaction, `(source, external_id)` is the idempotency key (identical resubmissions are no-op duplicates, differing immutable data is a conflict), targets resolve against the `platforms`/`accounts` tables (one `pending` publication task per valid target, per-item error codes for invalid ones), and results are itemized per submitted post. The REST endpoint `POST /api/v1/posts` exposes it directly.
 
+## Scheduling and platform adapters
+
+`src/publisher/core/scheduling.py` implements schedule assignment (specification §9): it matches `pending` tasks to active `publishing_schedules` rows by account and post type, computes the next eligible slot from ISO weekdays (1=Monday … 7=Sunday) in the schedule's IANA time zone, and stores the UTC instant in `scheduled_at` with status `scheduled`. Tasks that already carry a `scheduled_at` are never moved by routine runs; tasks without a matching schedule stay `pending` and are visible through the API. Documented DST policy (PLAN step-4 proposal, awaiting owner sign-off): ambiguous local times resolve to the earlier offset, nonexistent local times to the next valid instant (the end of the gap).
+
+Slot exclusivity (spec §9.2) is enforced twice: a database-level unique index on `(account_id, scheduled_at)` (migration `c4d8e21a95f0`) and occupied-slot skipping inside the single assignment transaction.
+
+The first platform adapter lives in `src/publisher/adapters/telegram/`: `sendMessage` in HTML parse mode, chat id from the account configuration, bot token resolved through the account's secret reference (never logged — an httpx log filter redacts token-shaped URL segments), Telegram's `message_id` recorded as `external_post_id`, classified errors including `retry_after` handling, and message-length validation against the 4096-character Bot API limit.
+
+The `SchedulerService` (APScheduler interval job) is provided for wiring; the application startup connects it together with the publishing engine in roadmap step 5, so running the API is unchanged for now.
+
 ## Running the API
 
 Set at least the API key, apply migrations, and start uvicorn:
@@ -91,7 +101,8 @@ Delivered so far (roadmap in `docs/PLAN.md`):
 - **Step 1 — scaffold:** package layout, settings, universal content models, adapter contract, SQLAlchemy models, session factory, read-only task listing, `publisher` CLI.
 - **Step 2 — migrations & ingestion:** Alembic setup with the initial migration creating all six tables (`alembic upgrade head`), and the ingestion service with idempotency, conflict detection, and target resolution.
 - **Step 3 — REST API:** FastAPI app with unauthenticated `/health`, `X-API-Key` authentication (constant-time compare), `POST /api/v1/posts` (itemized batch ingestion), `GET /api/v1/posts/{post_id}`, `GET /api/v1/tasks` (filters + pagination), `GET /api/v1/tasks/{task_id}`, consistent error objects, and OpenAPI documentation.
+- **Step 4 — scheduler & Telegram adapter:** schedule assignment (`core/scheduling.py`) with IANA time zones, ISO weekdays, a documented DST policy, and database-enforced slot exclusivity; the Telegram adapter (`adapters/telegram/`) with HTML `sendMessage`, secret-reference bot tokens, `message_id` → `external_post_id`, `retry_after` error classification, and length validation.
 
-Next: the scheduler and Telegram adapter (step 4) — schedule assignment from `publishing_schedules` and the first platform adapter.
+Next: the publishing engine & reliability (step 5) — atomic task claiming, due-task processing, retries with backoff, stale-claim recovery, and the missed-slot downtime policy, plus wiring the scheduler into application startup.
 
 This repository documentation defines the implementation baseline. Implement the system incrementally and keep tests and documentation aligned with the specification.

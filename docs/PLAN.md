@@ -1,9 +1,9 @@
 # Delivery Plan — Universal Publishing Platform
 
-**Status:** Steps 1–3 of the step-by-step build delivered. Step 1 (scaffold)
+**Status:** Steps 1–4 of the step-by-step build delivered. Step 1 (scaffold)
 was merged as pull request #1, step 2 (persistence migrations & ingestion
-service) as pull request #2, and step 3 (REST API) is delivered as the
-step-3 pull request.
+service) as pull request #2, step 3 (REST API) as the step-3 pull request,
+and step 4 (scheduler & Telegram adapter) as the step-4 pull request.
 **Authority:** `docs/TECHNICAL_SPECIFICATION.md` and `docs/ARCHITECTURE.md` are the
 mandatory baseline (`AGENTS.md` §1). This document only sequences delivery into
 reviewable steps; it does not change the architecture. Any deviation from the
@@ -159,6 +159,36 @@ API, persistence across restart).
 
 Acceptance criteria: scheduling and adapter items of spec §17 pass; no
 platform conditionals appear in core modules.
+
+> **Delivered (step-4 pull request):** `core/scheduling.py` assigns
+> `scheduled_at` to unscheduled `pending` tasks in one transaction: active
+> schedules match by `(account, post_type)`, slots are computed from ISO
+> weekdays (1=Monday…7=Sunday) in each schedule's IANA time zone and
+> persisted as UTC (§9.1); tasks that already carry `scheduled_at` are
+> never touched, and tasks without a matching schedule stay `pending`.
+> DST policy implemented per the PLAN proposal (owner sign-off requested in
+> the pull request): ambiguous local times → earlier offset; nonexistent
+> local times → next valid instant (end of the gap, exact via offset
+> binary search). Slot exclusivity (§9.2) is database-enforced by a unique
+> `(account_id, scheduled_at)` index (migration `c4d8e21a95f0`; SQL NULL
+> semantics leave unscheduled rows free) plus occupied-slot skipping inside
+> the assignment transaction. `SchedulerService` wraps the pass in an
+> APScheduler interval job (dependency added; wiring into app startup joins
+> step 5 with the publishing engine). `adapters/telegram/` implements the
+> `PlatformAdapter` protocol: `sendMessage` in HTML parse mode, chat id
+> from account configuration, bot token via the account's credential
+> reference (`SecretStr`, never logged — an httpx log filter redacts
+> token-shaped URL segments), `message_id` → `external_post_id`, error
+> classification with `retry_after` → rate-limited (invalid
+> credentials/destination → permanent, transport/5xx → temporary), and
+> 4096-character message-length validation before any request; media is
+> rejected, not dropped (§12). All adapter tests run on a mocked httpx
+> transport — no live Telegram calls. 39 new tests (DST resolution,
+> scheduling §17 items, slot uniqueness at the database level, adapter
+> behavior and secret hygiene); full suite 138 green, ruff clean. Core
+> modules contain no platform references; the scheduling/adapter items of
+> spec §17 pass except the missed-slot *relocation* of already-scheduled
+> tasks, which belongs to the step-5 publishing engine per this plan.
 
 ### Step 5 — publishing engine & reliability
 

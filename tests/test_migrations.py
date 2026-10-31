@@ -1,9 +1,10 @@
-"""Migration tests (roadmap step 2, specification §8).
+"""Migration tests (roadmap step 2, specification §8; slot index §9.2).
 
 `alembic upgrade head` must create all six tables on an empty database with
-every spec §8 uniqueness constraint; `downgrade base` must drop them. The
-migrations run through the Alembic command API against a temporary SQLite
-file — no live external database (AGENTS.md §5).
+every spec §8 uniqueness constraint plus the §9.2 account-slot exclusivity
+index; `downgrade base` must drop them. The migrations run through the
+Alembic command API against a temporary SQLite file — no live external
+database (AGENTS.md §5).
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from publisher.db.models import Base
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
-HEAD_REVISION = "ed8835379d4c"
+HEAD_REVISION = "c4d8e21a95f0"
 APP_TABLES = {
     "platforms",
     "posts",
@@ -121,6 +122,81 @@ def test_spec_uniqueness_constraints_and_status_check_present(alembic_config) ->
             text("SELECT sql FROM sqlite_master WHERE name='publication_tasks'")
         ).scalar_one()
         assert "ck_publication_tasks_status" in ddl
+    finally:
+        engine.dispose()
+
+
+def test_slot_exclusivity_index_present(alembic_config) -> None:
+    """Spec §9.2: the unique (account_id, scheduled_at) index exists."""
+    config, url = alembic_config
+    engine = create_engine(url)
+    try:
+        indexes = {
+            index["name"]: set(index["column_names"])
+            for index in inspect(engine).get_indexes("publication_tasks")
+        }
+        assert indexes["uq_publication_tasks_account_slot"] == {
+            "account_id",
+            "scheduled_at",
+        }
+        index_ddl = engine.connect().execute(
+            text("SELECT sql FROM sqlite_master WHERE name='uq_publication_tasks_account_slot'")
+        ).scalar_one()
+        assert "UNIQUE" in index_ddl.upper()
+    finally:
+        engine.dispose()
+
+
+def test_slot_exclusivity_index_rejects_duplicate_account_slots(alembic_config) -> None:
+    config, url = alembic_config
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO platforms (id, key, display_name, enabled, created_at) "
+                    "VALUES ('p1', 'telegram', 'T', 1, '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO accounts (id, platform_id, key, display_name, "
+                    "credentials_ref, configuration_json, active, created_at, updated_at) "
+                    "VALUES ('a1', 'p1', 'english_channel', 'A', 'TELEGRAM_BOT_TOKEN', '{}', 1, "
+                    "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO posts (id, source, external_id, content_json, post_type, "
+                    "received_at, created_at) VALUES ('po1', 's', 'e1', '{}', 'dialogue', "
+                    "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO posts (id, source, external_id, content_json, post_type, "
+                    "received_at, created_at) VALUES ('po2', 's', 'e2', '{}', 'dialogue', "
+                    "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+            task_sql = (
+                "INSERT INTO publication_tasks (id, post_id, account_id, status, scheduled_at, "
+                "attempt_count, created_at, updated_at) VALUES ('{tid}', '{pid}', 'a1', "
+                "'scheduled', '2026-11-02 04:00:00', 0, '2026-01-01 00:00:00', "
+                "'2026-01-01 00:00:00')"
+            )
+            conn.execute(text(task_sql.format(tid="t1", pid="po1")))
+            with pytest.raises(IntegrityError):
+                conn.execute(text(task_sql.format(tid="t2", pid="po2")))
+            # NULL scheduled_at rows are unaffected by the unique index.
+            conn.execute(
+                text(
+                    "INSERT INTO publication_tasks (id, post_id, account_id, status, "
+                    "attempt_count, created_at, updated_at) VALUES ('t3', 'po2', 'a1', "
+                    "'pending', 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
     finally:
         engine.dispose()
 
