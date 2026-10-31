@@ -17,6 +17,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -139,6 +140,15 @@ class PublicationTask(Base):
     __tablename__ = "publication_tasks"
     __table_args__ = (
         UniqueConstraint("post_id", "account_id", name="uq_publication_tasks_post_account"),
+        # Slot exclusivity (spec §9.2): at most one task per account slot.
+        # SQL NULL semantics leave unscheduled rows (scheduled_at IS NULL)
+        # unaffected.
+        Index(
+            "uq_publication_tasks_account_slot",
+            "account_id",
+            "scheduled_at",
+            unique=True,
+        ),
         CheckConstraint(
             f"status IN ({_TASK_STATUS_VALUES})", name="ck_publication_tasks_status"
         ),
