@@ -39,7 +39,40 @@ Run migrations as a documented deployment step before starting the service; avoi
 
 ## Ingestion service
 
-`src/publisher/services/ingestion.py` implements the ingestion contract of specification §6: each submitted item is processed in its own transaction, `(source, external_id)` is the idempotency key (identical resubmissions are no-op duplicates, differing immutable data is a conflict), targets resolve against the `platforms`/`accounts` tables (one `pending` publication task per valid target, per-item error codes for invalid ones), and results are itemized per submitted post. The REST endpoint that exposes it arrives with the API layer.
+`src/publisher/services/ingestion.py` implements the ingestion contract of specification §6: each submitted item is processed in its own transaction, `(source, external_id)` is the idempotency key (identical resubmissions are no-op duplicates, differing immutable data is a conflict), targets resolve against the `platforms`/`accounts` tables (one `pending` publication task per valid target, per-item error codes for invalid ones), and results are itemized per submitted post. The REST endpoint `POST /api/v1/posts` exposes it directly.
+
+## Running the API
+
+Set at least the API key, apply migrations, and start uvicorn:
+
+```bash
+export API_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')
+export DATABASE_URL=sqlite+aiosqlite:////app/data/publisher.db   # or your path
+alembic upgrade head
+uvicorn publisher.main:app --host 0.0.0.0 --port 8000
+```
+
+In production (`APP_ENV=production`) startup refuses to serve unless `API_KEY` is set (and the Telegram bot token when the scheduler is enabled) — `Settings.validate_production()` runs in the application lifespan. `APP_HOST`/`APP_PORT` mirror the uvicorn bind options.
+
+Interactive documentation: `/docs` and `/openapi.json`.
+
+Submit a batch (1–10 posts; every item gets its own result):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/posts \
+  -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{
+    "source": "n8n",
+    "posts": [{
+      "external_id": "english-dialogue-000125",
+      "content": {"type": "text", "title": "At the coffee shop", "body": "Can I have a coffee?\nSure!"},
+      "targets": [{"platform": "telegram", "account": "english_channel"}],
+      "post_type": "dialogue"
+    }]
+  }'
+```
+
+Read endpoints take the same header: `GET /api/v1/posts/{post_id}`, `GET /api/v1/tasks?status=pending&limit=20&offset=0`, `GET /api/v1/tasks/{task_id}`. Everything except `GET /health` requires `X-API-Key`; every error is `{"error": {"code", "message", "details"}}`.
 
 ## API overview
 
@@ -57,7 +90,8 @@ Delivered so far (roadmap in `docs/PLAN.md`):
 
 - **Step 1 — scaffold:** package layout, settings, universal content models, adapter contract, SQLAlchemy models, session factory, read-only task listing, `publisher` CLI.
 - **Step 2 — migrations & ingestion:** Alembic setup with the initial migration creating all six tables (`alembic upgrade head`), and the ingestion service with idempotency, conflict detection, and target resolution.
+- **Step 3 — REST API:** FastAPI app with unauthenticated `/health`, `X-API-Key` authentication (constant-time compare), `POST /api/v1/posts` (itemized batch ingestion), `GET /api/v1/posts/{post_id}`, `GET /api/v1/tasks` (filters + pagination), `GET /api/v1/tasks/{task_id}`, consistent error objects, and OpenAPI documentation.
 
-Next: the REST API (step 3) — FastAPI application, `X-API-Key` authentication, `POST /api/v1/posts`, and the query endpoints.
+Next: the scheduler and Telegram adapter (step 4) — schedule assignment from `publishing_schedules` and the first platform adapter.
 
 This repository documentation defines the implementation baseline. Implement the system incrementally and keep tests and documentation aligned with the specification.

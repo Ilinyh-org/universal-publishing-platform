@@ -1,8 +1,9 @@
 # Delivery Plan — Universal Publishing Platform
 
-**Status:** Steps 1–2 of the step-by-step build delivered. Step 1 (scaffold)
-was merged as pull request #1; step 2 (persistence migrations & ingestion
-service) is delivered as the step-2 pull request.
+**Status:** Steps 1–3 of the step-by-step build delivered. Step 1 (scaffold)
+was merged as pull request #1, step 2 (persistence migrations & ingestion
+service) as pull request #2, and step 3 (REST API) is delivered as the
+step-3 pull request.
 **Authority:** `docs/TECHNICAL_SPECIFICATION.md` and `docs/ARCHITECTURE.md` are the
 mandatory baseline (`AGENTS.md` §1). This document only sequences delivery into
 reviewable steps; it does not change the architecture. Any deviation from the
@@ -122,6 +123,26 @@ committed atomically per item.
 Acceptance criteria: the API items of spec §17 pass (key required, invalid key
 rejected, batch boundaries, partial batch success, idempotency through the
 API, persistence across restart).
+
+> **Delivered (step-3 pull request):** FastAPI application (`main.py`, `api/`):
+> unauthenticated `GET /health`; `X-API-Key` authentication via
+> `core/security.py` (constant-time compare; one stable 401 error object for
+> both missing and invalid keys); `POST /api/v1/posts` wired to the step-2
+> ingestion service (batch 1–10 enforced by the request model; the itemized
+> accepted/duplicate/conflict/rejected results are the response schema, spec
+> §6.6); `GET /api/v1/posts/{post_id}` (post + per-target task statuses);
+> `GET /api/v1/tasks` (status/platform/account/post-type filters, bounded
+> `created_from`/`created_to` range, limit/offset pagination with totals);
+> `GET /api/v1/tasks/{task_id}` (task + attempt history). Every non-2xx
+> response uses the same `{"error": {code, message, details}}` object;
+> OpenAPI is served at `/docs` and `/openapi.json`; startup calls
+> `Settings.validate_production()`. No secrets, credential references, or
+> account configuration appear in any response (`credentials_ref` and
+> `configuration_json` are never mapped into API views). 24 API tests on
+> in-memory and file-backed SQLite cover the §17 API items including
+> persistence across a simulated restart; full suite 79 green, ruff clean.
+> Run: `alembic upgrade head` then `uvicorn publisher.main:app` with `API_KEY`
+> set (README "Running the API").
 
 ### Step 4 — scheduler & Telegram adapter
 
