@@ -1,6 +1,8 @@
 # Delivery Plan — Universal Publishing Platform
 
-**Status:** Step 1 of the step-by-step build, delivered as the step-1 pull request.
+**Status:** Steps 1–2 of the step-by-step build delivered. Step 1 (scaffold)
+was merged as pull request #1; step 2 (persistence migrations & ingestion
+service) is delivered as the step-2 pull request.
 **Authority:** `docs/TECHNICAL_SPECIFICATION.md` and `docs/ARCHITECTURE.md` are the
 mandatory baseline (`AGENTS.md` §1). This document only sequences delivery into
 reviewable steps; it does not change the architecture. Any deviation from the
@@ -94,6 +96,19 @@ committed; `README.md`, `.env.example`, and both docs are untouched.
 Acceptance criteria: duplicate submissions are no-ops; conflicts reported per
 item; invalid targets rejected without blocking valid ones; post + tasks
 committed atomically per item.
+
+> **Delivered (step-2 pull request):** Alembic initialized with an
+> async-capable environment (`alembic/env.py` over `Base.metadata`,
+> `DATABASE_URL` env override) and the initial migration `ed8835379d4c`
+> creating all six tables with every §8 uniqueness constraint and the
+> task-status CHECK (`alembic upgrade head` verified on an empty database,
+> plus a downgrade/re-upgrade test). `services/ingestion.py` implements spec
+> §6 per-item processing, `(source, external_id)` idempotency with
+> duplicate/conflict classification, target resolution with per-item error
+> codes (`unknown_platform`, `platform_disabled`, `unknown_account`,
+> `inactive_account`), one `pending` task per valid target, and itemized
+> results. 13 ingestion tests + 5 migration tests on SQLite; the REST
+> endpoint and `X-API-Key` authentication remain step 3 as planned.
 
 ### Step 3 — REST API
 
