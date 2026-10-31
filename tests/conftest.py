@@ -6,13 +6,16 @@ no real platform calls, no secrets (AGENTS.md §5).
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import Session
 
 from publisher.db.models import Base
+from publisher.db.session import create_engine as create_async_engine
+from publisher.db.session import make_session_factory
 
 # Every variable from .env.example, so config tests never see host env values.
 ENV_VARS = [
@@ -60,3 +63,23 @@ def sync_session(sync_memory_engine: Engine) -> Iterator[Session]:
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture
+async def memory_engine() -> AsyncIterator[AsyncEngine]:
+    """An async engine over a fresh in-memory SQLite with all tables created."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+async def session_factory(
+    memory_engine: AsyncEngine,
+) -> async_sessionmaker:
+    """A session factory over the fresh in-memory database."""
+    return make_session_factory(memory_engine)
