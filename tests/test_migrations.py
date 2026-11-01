@@ -1,10 +1,11 @@
-"""Migration tests (roadmap step 2, specification §8; slot index §9.2).
+"""Migration tests (roadmap step 2, specification §8; step 5 claim tracking).
 
-`alembic upgrade head` must create all six tables on an empty database with
-every spec §8 uniqueness constraint plus the §9.2 account-slot exclusivity
-index; `downgrade base` must drop them. The migrations run through the
-Alembic command API against a temporary SQLite file — no live external
-database (AGENTS.md §5).
+`alembic upgrade head` must create all application tables on an empty
+database with every spec §8 uniqueness constraint, the §9.2 account-slot
+exclusivity index, the §9.3 `publication_tasks.claimed_at` column, and the
+`engine_state` heartbeat table; `downgrade base` must drop them. The
+migrations run through the Alembic command API against a temporary SQLite
+file — no live external database (AGENTS.md §5).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from publisher.db.models import Base
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
-HEAD_REVISION = "c4d8e21a95f0"
+HEAD_REVISION = "b3d1c7e94a52"
 APP_TABLES = {
     "platforms",
     "posts",
@@ -29,6 +30,7 @@ APP_TABLES = {
     "publishing_schedules",
     "publication_tasks",
     "publication_attempts",
+    "engine_state",
 }
 
 
@@ -49,12 +51,16 @@ def alembic_config(tmp_path, monkeypatch):
     return config, f"sqlite:///{db_path}"
 
 
-def test_upgrade_head_creates_all_six_tables(alembic_config) -> None:
+def test_upgrade_head_creates_all_app_tables(alembic_config) -> None:
     config, url = alembic_config
     engine = create_engine(url)
     try:
         tables = set(inspect(engine).get_table_names())
         assert APP_TABLES <= tables
+        claimed_at = {
+            c["name"] for c in inspect(engine).get_columns("publication_tasks")
+        }
+        assert "claimed_at" in claimed_at  # stale-claim recovery (spec §9.3)
         version = engine.connect().execute(
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()

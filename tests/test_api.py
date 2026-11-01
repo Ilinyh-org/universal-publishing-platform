@@ -33,6 +33,7 @@ def _settings(database_url: str = _IN_MEMORY) -> Settings:
         app_env="test",
         api_key=TEST_API_KEY,
         scheduler_enabled=False,
+        engine_enabled=False,
         database_url=database_url,
     )
 
