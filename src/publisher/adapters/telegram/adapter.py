@@ -48,6 +48,9 @@ class TelegramAdapter:
 
     platform_key = PLATFORM_KEY
 
+    #: Credential fields this adapter expects in `AccountConfig.credentials`.
+    credential_names = ("bot_token",)
+
     def __init__(
         self,
         client_factory: Callable[[str], TelegramClient] | None = None,
