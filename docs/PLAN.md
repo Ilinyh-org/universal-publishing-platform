@@ -1,9 +1,10 @@
 # Delivery Plan — Universal Publishing Platform
 
-**Status:** Steps 1–4 of the step-by-step build delivered. Step 1 (scaffold)
+**Status:** Steps 1–5 of the step-by-step build delivered. Step 1 (scaffold)
 was merged as pull request #1, step 2 (persistence migrations & ingestion
 service) as pull request #2, step 3 (REST API) as the step-3 pull request,
-and step 4 (scheduler & Telegram adapter) as the step-4 pull request.
+step 4 (scheduler & Telegram adapter) as the step-4 pull request, and step 5
+(publishing engine & reliability) as the step-5 pull request.
 **Authority:** `docs/TECHNICAL_SPECIFICATION.md` and `docs/ARCHITECTURE.md` are the
 mandatory baseline (`AGENTS.md` §1). This document only sequences delivery into
 reviewable steps; it does not change the architecture. Any deviation from the
@@ -203,6 +204,52 @@ platform conditionals appear in core modules.
 Acceptance criteria: publishing/reliability items of spec §17 pass (claim
 exclusivity, retries, max attempts, stale recovery, one target failing does
 not affect another).
+
+> **Delivered (step-5 pull request):** `core/publishing.py` implements the
+> due-task engine: a single conditional `UPDATE … WHERE status = …` claims a
+> task into `publishing` (database-level exclusivity — concurrent ticks can
+> never hold the same task) and creates the attempt record in the same
+> transaction; due `scheduled` (`scheduled_at <= now`) and `retry_wait`
+> (`next_attempt_at <= now`) tasks are processed independently, with the
+> adapter call outside any database transaction (ARCHITECTURE §8) and the
+> success/retry/fail transition finalized in one transaction — success
+> stores `published_at`, `external_post_id`, and sanitized response metadata
+> and clears retry/error fields; temporary failures set `retry_wait` with
+> exponential backoff (`RETRY_BASE_DELAY_SECONDS × 2^(attempt−1)` capped at
+> `RETRY_MAX_DELAY_SECONDS`, jitter in the upper half); rate-limited failures
+> honor the platform-provided `retry_after` exactly (never jittered
+> shorter); permanent failures — or exhaustion of `MAX_ATTEMPTS` (default 5,
+> `Settings`-configurable) — set `failed`. Unclassified exceptions retry
+> conservatively under the same attempt cap with only the exception class
+> name stored. Stale-claim recovery (§9.3): tasks stuck in `publishing`
+> longer than `STALE_PUBLISHING_TIMEOUT_SECONDS` are returned to the queue —
+> the unfinished attempt is closed with the stable `stale_claim` code and a
+> message recording the delivery ambiguity (possible duplicate external
+> post; exactly-once is not promised), then `retry_wait`, or `failed` at
+> max attempts. Missed-slot downtime policy (§9.2, closing the step-4 scope
+> note): the engine keeps a one-row `engine_state` heartbeat (migration
+> `b3d1c7e94a52`, together with `publication_tasks.claimed_at`); a tick gap
+> over the stale-claim timeout (or the first tick after enabling the
+> engine) counts as downtime — due `scheduled` tasks skip their missed slot
+> and move to the next future slot via a shared slot search
+> (`compute_next_free_slot`, reusing the step-4 slot math and honoring the
+> account-slot unique index), unscheduled `pending` work always lands in
+> future slots through the step-4 assignment pass, and every relocation is
+> logged; due tasks with no usable active schedule stay due (logged). The
+> adapter registry (`adapters/registry.py`, spec §11.3) and the secret
+> provider (`core/secrets.py`, env/static implementations resolving
+> `credentials_ref` against the credential names an adapter declares) keep
+> core platform-independent. Startup wiring: the FastAPI lifespan starts
+> the `SchedulerService` and the new `PublishingEngineService` behind
+> `ENGINE_ENABLED` (new documented variable; `validate_production` requires
+> the bot token when it is on) and stops them gracefully, draining an
+> in-flight tick. 49 new tests on in-memory/file SQLite with a fake adapter
+> — claim exclusivity (sequential + parallel ticks on a file database),
+> success/retry/backoff-cap/rate-limit/max-attempt transitions, stale
+> recovery and republish, target isolation, downtime rescheduling with
+> slot-exclusivity and no-schedule fallback, registry and secret-provider
+> units, lifespan start/stop; full suite 187 green, ruff clean, no live
+> Telegram calls, no n8n or database changes.
 
 ### Step 6 — deployment
 
