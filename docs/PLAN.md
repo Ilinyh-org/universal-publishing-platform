@@ -1,10 +1,11 @@
 # Delivery Plan — Universal Publishing Platform
 
-**Status:** Steps 1–5 of the step-by-step build delivered. Step 1 (scaffold)
+**Status:** Steps 1–6 of the step-by-step build delivered. Step 1 (scaffold)
 was merged as pull request #1, step 2 (persistence migrations & ingestion
 service) as pull request #2, step 3 (REST API) as the step-3 pull request,
-step 4 (scheduler & Telegram adapter) as the step-4 pull request, and step 5
-(publishing engine & reliability) as the step-5 pull request.
+step 4 (scheduler & Telegram adapter) as the step-4 pull request, step 5
+(publishing engine & reliability) as the step-5 pull request, and step 6
+(deployment) as the step-6 pull request.
 **Authority:** `docs/TECHNICAL_SPECIFICATION.md` and `docs/ARCHITECTURE.md` are the
 mandatory baseline (`AGENTS.md` §1). This document only sequences delivery into
 reviewable steps; it does not change the architecture. Any deviation from the
@@ -260,6 +261,33 @@ not affect another).
 
 Acceptance criteria: the same image and configuration model run in standalone
 Docker and are TrueNAS SCALE Custom App ready (spec §15).
+
+> **Delivered (step-6 pull request):** a multi-stage `Dockerfile`
+> (`python:3.12-slim`) building one portable image: runtime as the dedicated
+> non-root user `upp` (uid/gid 10001), the bind port driven by `APP_PORT`
+> (default 8000; `EXPOSE` documents the build-time default),
+> `VOLUME ["/app/data"]` for the SQLite database, and an image-borne
+> `HEALTHCHECK` polling unauthenticated `/health` (§16). The exec-form
+> entrypoint (`docker/entrypoint.sh`) makes uvicorn PID 1, so runtime
+> SIGTERM/SIGINT stop new work and the step-5 lifespan shutdown drains the
+> in-flight engine tick; the graceful-shutdown bound
+> (`UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN`, default 30 s) is documented against
+> a larger runtime stop timeout. `.dockerignore` keeps `.env`, local
+> databases, and caches out of the build context (no secrets in the image).
+> The `docker-compose.yml` example shows the full configuration model:
+> `env_file: .env`, named volume at `/app/data`, `restart: unless-stopped`,
+> attachment to an existing external network (`external: true`, operator-set
+> name — no platform-created names), a 60 s stop-grace period, and the
+> documented one-off migration step (`docker compose run --rm app alembic
+> upgrade head`) with a single migration runner. `docs/DEPLOYMENT.md` covers
+> the environment-variable table, secret handling via environment only
+> (`API_KEY`, `TELEGRAM_BOT_TOKEN` through account `credentials_ref`),
+> standalone Docker and TrueNAS SCALE Custom App procedures, operational
+> notes, and rollback. New `tests/test_deployment.py` encodes the §15
+> requirements structurally (non-root, volume/port/healthcheck, exec
+> entrypoint, compose policy, secret-shape scan); image runtime verification
+> (build, `/health`, SIGTERM stop) remains owner-deploy-time — the
+> development sandbox has no Docker daemon.
 
 ### Step 7 — migrate the live n8n workflow (final)
 
