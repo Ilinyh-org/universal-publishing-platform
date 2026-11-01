@@ -1,0 +1,51 @@
+# Example Compose deployment for the Universal Publishing Platform (specification §15).
+#
+# Configuration model: every setting comes from the environment — `env_file:
+# .env` below (copy `.env.example` and fill it in). Secrets (API_KEY,
+# TELEGRAM_BOT_TOKEN) exist only in that environment, never in the image or
+# this file.
+#
+# One-time preparation:
+#   docker network create platform-net      # your existing external network
+#   cp .env.example .env                    # then edit placeholders
+#   docker compose build
+#   docker compose run --rm app alembic upgrade head   # migrations are a
+#                                                      # documented deployment
+#                                                      # step (specification §15)
+#   docker compose up -d
+#
+# External network: attach to a network that already exists on the Docker
+# host and point `name:` at it. This deployment must not depend on a network
+# name created by TrueNAS or any other platform — create/name it yourself and
+# keep the value under your control.
+
+services:
+  app:
+    # `build:` for standalone builds; replace the image reference with a
+    # registry path (or build on the host) for TrueNAS SCALE Custom Apps —
+    # the same image and configuration model serve both (specification §15).
+    build: .
+    image: universal-publishing-platform:latest
+    env_file: .env
+    restart: unless-stopped
+    ports:
+      # host:container — the container side follows APP_PORT (default 8000).
+      - "8000:8000"
+    volumes:
+      # SQLite database and persistent application state (specification §15).
+      - app-data:/app/data
+    networks:
+      - platform
+    # SIGTERM goes straight to uvicorn (exec-form entrypoint), which stops
+    # new work and lets the lifespan drain the in-flight engine tick. Allow
+    # more time than the 10 s default so the drain is not cut by SIGKILL.
+    stop_grace_period: 60s
+    # The image defines the /health healthcheck; no override is required.
+
+networks:
+  platform:
+    external: true
+    name: platform-net  # rename to the network that already exists on your host
+
+volumes:
+  app-data:
