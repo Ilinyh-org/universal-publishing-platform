@@ -162,6 +162,9 @@ class PublicationTask(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set when the engine claims the task into `publishing` and cleared on
+    # every transition out of it; drives stale-claim recovery (spec §9.3).
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     external_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -198,3 +201,24 @@ class PublicationAttempt(Base):
     )
 
     task: Mapped[PublicationTask] = relationship(back_populates="attempts")
+
+
+class EngineState(Base):
+    """Operational heartbeat of the publishing engine (specification §9.2).
+
+    A single row (id=1) records the last engine tick. On every tick the
+    engine compares the previous heartbeat with the current time: a gap
+    longer than the stale-claim timeout is treated as downtime, and due
+    `scheduled` tasks are moved to their next future slot instead of being
+    published as a backlog burst.
+    """
+
+    __tablename__ = "engine_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_tick_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

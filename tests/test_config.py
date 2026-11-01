@@ -87,6 +87,34 @@ def test_validate_production_ok(clean_env: pytest.MonkeyPatch) -> None:
     settings.validate_production()
 
 
+def test_validate_production_requires_bot_token_when_engine_on(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """ENGINE_ENABLED (default true) also requires the platform token."""
+    settings = Settings(
+        _env_file=None,
+        app_env="production",
+        api_key="key",
+        scheduler_enabled=False,
+    )
+    with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
+        settings.validate_production()
+
+
+def test_validate_production_ok_without_background_work(
+    clean_env: pytest.MonkeyPatch,
+) -> None:
+    """No token needed when neither scheduler nor engine runs."""
+    settings = Settings(
+        _env_file=None,
+        app_env="production",
+        api_key="key",
+        scheduler_enabled=False,
+        engine_enabled=False,
+    )
+    settings.validate_production()
+
+
 def test_validate_production_skipped_outside_production(clean_env: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None, app_env="development")
     settings.validate_production()

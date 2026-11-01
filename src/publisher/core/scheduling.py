@@ -287,6 +287,54 @@ def _next_free_slot(
     return None
 
 
+async def compute_next_free_slot(
+    session: AsyncSession,
+    *,
+    account_id: str,
+    post_type: str,
+    now: datetime,
+) -> datetime | None:
+    """Next future slot for `(account, post_type)` not occupied by another
+    task of the account (spec §9.2).
+
+    Used by the missed-slot downtime policy to relocate already-scheduled
+    tasks whose slot passed during downtime. Occupied slots are tasks with
+    `scheduled_at >= now`; the relocated task's own past slot no longer
+    counts. Returns `None` when the account has no usable active schedule
+    or no free slot within the horizon.
+    """
+    now = _as_utc(now)
+    schedules = (
+        (
+            await session.execute(
+                select(PublishingSchedule).where(
+                    PublishingSchedule.account_id == account_id,
+                    PublishingSchedule.post_type == post_type,
+                    PublishingSchedule.active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    windows = [
+        window
+        for schedule in schedules
+        if (window := ScheduleWindow.from_row(schedule)) is not None
+    ]
+    if not windows:
+        return None
+    rows = await session.execute(
+        select(PublicationTask.scheduled_at).where(
+            PublicationTask.account_id == account_id,
+            PublicationTask.scheduled_at.is_not(None),
+            PublicationTask.scheduled_at >= now,
+        )
+    )
+    occupied = {_as_utc(value) for (value,) in rows.all()}
+    return _next_free_slot(windows, occupied, now=now)
+
+
 def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)

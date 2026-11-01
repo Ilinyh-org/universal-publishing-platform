@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     scheduler_enabled: bool = True
     scheduler_poll_interval_seconds: int = 15
+    # Master switch for ALL background work (schedule assignment + publishing
+    # engine) in the API process. Tests and CLI runs set ENGINE_ENABLED=false
+    # so behavior stays deterministic.
+    engine_enabled: bool = True
 
     max_attempts: int = 5
     retry_base_delay_seconds: int = 30
@@ -65,7 +69,7 @@ class Settings(BaseSettings):
         if self.app_env == "production":
             if self.api_key is None:
                 missing.append("API_KEY")
-            if self.scheduler_enabled and self.telegram_bot_token is None:
+            if (self.scheduler_enabled or self.engine_enabled) and self.telegram_bot_token is None:
                 missing.append("TELEGRAM_BOT_TOKEN")
         if missing:
             raise ValueError(f"missing required production settings: {', '.join(missing)}")

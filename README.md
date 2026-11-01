@@ -49,7 +49,17 @@ Slot exclusivity (spec §9.2) is enforced twice: a database-level unique index o
 
 The first platform adapter lives in `src/publisher/adapters/telegram/`: `sendMessage` in HTML parse mode, chat id from the account configuration, bot token resolved through the account's secret reference (never logged — an httpx log filter redacts token-shaped URL segments), Telegram's `message_id` recorded as `external_post_id`, classified errors including `retry_after` handling, and message-length validation against the 4096-character Bot API limit.
 
-The `SchedulerService` (APScheduler interval job) is provided for wiring; the application startup connects it together with the publishing engine in roadmap step 5, so running the API is unchanged for now.
+The `SchedulerService` (APScheduler interval job) runs the assignment pass periodically; together with the publishing engine it is started by the application lifespan when `ENGINE_ENABLED=true` (see below).
+
+## Publishing engine and reliability
+
+`src/publisher/core/publishing.py` implements due-task processing (specification §9.3, §10). One engine pass:
+
+1. **Stale-claim recovery** — tasks stuck in `publishing` longer than `STALE_PUBLISHING_TIMEOUT_SECONDS` are returned to the queue: the unfinished attempt is closed with the `stale_claim` error code and a message recording the delivery ambiguity (the platform may have accepted the request, so a duplicate external post is possible; exactly-once is not promised), and the task goes to `retry_wait` — or to `failed` when `MAX_ATTEMPTS` is exhausted.
+2. **Missed-slot downtime policy (§9.2)** — the engine keeps a heartbeat (`engine_state`, one row). When the gap since the previous tick exceeds `STALE_PUBLISHING_TIMEOUT_SECONDS` (or on the very first tick after enabling the engine), due `scheduled` tasks are treated as missed: their slot is skipped, the task moves to its next future schedule slot, and the rescheduling is logged. Unscheduled `pending` tasks always receive future slots through the scheduler's assignment pass. Due tasks with no usable active schedule stay due and publish normally (logged).
+3. **Due-task publishing** — `scheduled` tasks with `scheduled_at <= now` and `retry_wait` tasks with `next_attempt_at <= now` are claimed atomically (a conditional `UPDATE … WHERE status = …`, so no two workers can hold one task) with the attempt record created in the same transaction. The adapter call happens outside any database transaction; success (`published`, `published_at`, `external_post_id`, sanitized response metadata), retry (`retry_wait` + `next_attempt_at`), and permanent failure (`failed`) are each finalized in one transaction. One task failing never blocks another.
+
+Retries use exponential backoff — `RETRY_BASE_DELAY_SECONDS × 2^(attempt−1)` capped at `RETRY_MAX_DELAY_SECONDS`, with jitter in the upper half — and honor platform-provided retry delays (Telegram `retry_after`) exactly. After `MAX_ATTEMPTS` total attempts (default 5) a task is `failed`. Adapters are resolved through the registry (`adapters/registry.py`); credentials are resolved per account through the secret provider (`core/secrets.py`) from the account's `credentials_ref`, never stored in the database or logs.
 
 ## Running the API
 
@@ -62,7 +72,9 @@ alembic upgrade head
 uvicorn publisher.main:app --host 0.0.0.0 --port 8000
 ```
 
-In production (`APP_ENV=production`) startup refuses to serve unless `API_KEY` is set (and the Telegram bot token when the scheduler is enabled) — `Settings.validate_production()` runs in the application lifespan. `APP_HOST`/`APP_PORT` mirror the uvicorn bind options.
+In production (`APP_ENV=production`) startup refuses to serve unless `API_KEY` is set (and the Telegram bot token when the scheduler or engine is enabled) — `Settings.validate_production()` runs in the application lifespan. `APP_HOST`/`APP_PORT` mirror the uvicorn bind options.
+
+Background work (schedule assignment plus the publishing engine) starts automatically with the API when `ENGINE_ENABLED=true` (the default) and stops gracefully on shutdown (SIGTERM/SIGINT drain an in-flight tick). Set `ENGINE_ENABLED=false` for deterministic tests, CLI-only use, or API-only replicas; `SCHEDULER_ENABLED=false` disables only the schedule-assignment pass.
 
 Interactive documentation: `/docs` and `/openapi.json`.
 
@@ -102,7 +114,8 @@ Delivered so far (roadmap in `docs/PLAN.md`):
 - **Step 2 — migrations & ingestion:** Alembic setup with the initial migration creating all six tables (`alembic upgrade head`), and the ingestion service with idempotency, conflict detection, and target resolution.
 - **Step 3 — REST API:** FastAPI app with unauthenticated `/health`, `X-API-Key` authentication (constant-time compare), `POST /api/v1/posts` (itemized batch ingestion), `GET /api/v1/posts/{post_id}`, `GET /api/v1/tasks` (filters + pagination), `GET /api/v1/tasks/{task_id}`, consistent error objects, and OpenAPI documentation.
 - **Step 4 — scheduler & Telegram adapter:** schedule assignment (`core/scheduling.py`) with IANA time zones, ISO weekdays, a documented DST policy, and database-enforced slot exclusivity; the Telegram adapter (`adapters/telegram/`) with HTML `sendMessage`, secret-reference bot tokens, `message_id` → `external_post_id`, `retry_after` error classification, and length validation.
+- **Step 5 — publishing engine & reliability:** the engine (`core/publishing.py`) with atomic task claiming + attempt records, due `scheduled`/`retry_wait` processing, exponential backoff with jitter capped by `MAX_ATTEMPTS` (default 5), exact rate-limit delays, stale-`publishing` recovery, and the missed-slot downtime policy with logged rescheduling; the adapter registry, the secret provider, and lifespan wiring of scheduler + engine behind `ENGINE_ENABLED`.
 
-Next: the publishing engine & reliability (step 5) — atomic task claiming, due-task processing, retries with backoff, stale-claim recovery, and the missed-slot downtime policy, plus wiring the scheduler into application startup.
+Next: deployment (step 6) — Dockerfile, Compose example, healthcheck, and TrueNAS SCALE Custom App readiness.
 
 This repository documentation defines the implementation baseline. Implement the system incrementally and keep tests and documentation aligned with the specification.

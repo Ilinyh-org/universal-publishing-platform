@@ -71,6 +71,11 @@ class PlatformAdapter(Protocol):
 
     platform_key: str
 
+    #: Credential field names the adapter expects in `AccountConfig.credentials`.
+    #: Secret providers use them to map a single `credentials_ref` to named
+    #: credential values without core knowing any platform-specific names.
+    credential_names: tuple[str, ...]
+
     async def validate_account(self, account: AccountConfig) -> None:
         """Raise AdapterError if the account configuration is invalid."""
         ...
