@@ -8,6 +8,7 @@ The first adapter is Telegram. The application is designed to run from the same 
 
 - [Technical specification](docs/TECHNICAL_SPECIFICATION.md) — authoritative requirements.
 - [Architecture](docs/ARCHITECTURE.md) — components, data flow, database relationships, and adapter boundary.
+- [Deployment guide](docs/DEPLOYMENT.md) — Docker/Compose, TrueNAS SCALE Custom App readiness, migrations, rollback.
 - [AI agent instructions](AGENTS.md) — mandatory rules for coding agents.
 
 ## Initial technology
@@ -35,7 +36,26 @@ DATABASE_URL=sqlite:////tmp/publisher.db alembic upgrade head
 alembic downgrade base   # drops all application tables
 ```
 
-Run migrations as a documented deployment step before starting the service; avoid running competing migrations from multiple app replicas (specification §15).
+Run migrations as a documented deployment step before starting the service; avoid running competing migrations from multiple app replicas (specification §15). In containers, run the step from the same image that will serve:
+
+```bash
+docker compose run --rm app alembic upgrade head
+```
+
+## Docker deployment
+
+One portable image (multi-stage build, non-root user `upp`) serves standalone Docker and TrueNAS SCALE Custom Apps: configurable port (`APP_PORT`, default `8000`), `/app/data` volume for the SQLite database, an image-borne `/health` healthcheck, and graceful SIGTERM/SIGINT shutdown (the exec entrypoint hands signals to uvicorn, whose lifespan shutdown drains the in-flight engine tick). All configuration arrives through the environment — `env_file: .env`; no secrets are baked into the image.
+
+```bash
+docker network create platform-net               # your own external network
+cp .env.example .env                             # fill in API_KEY / TELEGRAM_BOT_TOKEN
+docker compose build
+docker compose run --rm app alembic upgrade head # migrations: once per release
+docker compose up -d
+curl -s http://localhost:8000/health
+```
+
+The `docker-compose.yml` example demonstrates the full model — `restart: unless-stopped`, the named volume at `/app/data`, external-network attachment, and a stop-grace period for the drain. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the standalone `docker run` equivalent, the environment-variable table, TrueNAS SCALE Custom App notes, and rollback steps.
 
 ## Ingestion service
 
@@ -115,7 +135,8 @@ Delivered so far (roadmap in `docs/PLAN.md`):
 - **Step 3 — REST API:** FastAPI app with unauthenticated `/health`, `X-API-Key` authentication (constant-time compare), `POST /api/v1/posts` (itemized batch ingestion), `GET /api/v1/posts/{post_id}`, `GET /api/v1/tasks` (filters + pagination), `GET /api/v1/tasks/{task_id}`, consistent error objects, and OpenAPI documentation.
 - **Step 4 — scheduler & Telegram adapter:** schedule assignment (`core/scheduling.py`) with IANA time zones, ISO weekdays, a documented DST policy, and database-enforced slot exclusivity; the Telegram adapter (`adapters/telegram/`) with HTML `sendMessage`, secret-reference bot tokens, `message_id` → `external_post_id`, `retry_after` error classification, and length validation.
 - **Step 5 — publishing engine & reliability:** the engine (`core/publishing.py`) with atomic task claiming + attempt records, due `scheduled`/`retry_wait` processing, exponential backoff with jitter capped by `MAX_ATTEMPTS` (default 5), exact rate-limit delays, stale-`publishing` recovery, and the missed-slot downtime policy with logged rescheduling; the adapter registry, the secret provider, and lifespan wiring of scheduler + engine behind `ENGINE_ENABLED`.
+- **Step 6 — deployment:** the portable image (non-root `upp` user, `APP_PORT` default 8000, `/app/data` volume, `/health` healthcheck, exec-entrypoint SIGTERM/SIGINT drain), `.dockerignore`, the Compose example (external network, `unless-stopped`, `env_file`, stop-grace period), and the deployment guide covering migrations as a deployment step, the environment/secret model, TrueNAS SCALE Custom App readiness, and rollback.
 
-Next: deployment (step 6) — Dockerfile, Compose example, healthcheck, and TrueNAS SCALE Custom App readiness.
+Next: step 7 — migrate the live n8n workflow to the `POST /api/v1/posts` handoff under the n8n-bot safety rules (owner go-ahead required).
 
 This repository documentation defines the implementation baseline. Implement the system incrementally and keep tests and documentation aligned with the specification.
