@@ -1,0 +1,41 @@
+# Build and publish the portable image to GHCR (public package) on pushes to
+# main. Uses the repository Dockerfile unchanged (specification §15); the
+# same image serves standalone Docker and TrueNAS SCALE Custom Apps.
+# Secrets: none used beyond the built-in GITHUB_TOKEN.
+name: docker-publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/ilinyh-org/universal-publishing-platform:latest
+            ghcr.io/ilinyh-org/universal-publishing-platform:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
