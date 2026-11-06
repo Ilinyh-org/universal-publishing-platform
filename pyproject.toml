@@ -18,6 +18,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn>=0.30",
+    "httpx",
 ]
 
 [project.optional-dependencies]
