@@ -1,3 +1,4 @@
+#!/bin/sh
 # Universal Publishing Platform container entrypoint (specification §15).
 #
 # `exec` makes uvicorn PID 1, so the container runtime's SIGTERM/SIGINT reach
