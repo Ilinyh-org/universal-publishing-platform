@@ -169,6 +169,48 @@ GUI's YAML editor):
 7. **Shutdown:** keep a stop timeout above the graceful-shutdown bound so
    in-flight publications drain (§1).
 
+### 5.1 Secrets via `docker-compose.truenas.yml` (docker secrets)
+
+The repository ships `docker-compose.truenas.yml` — a Custom App variant of
+the Compose example that supplies secrets through **docker secrets** instead
+of environment values, so `API_KEY` and `TELEGRAM_BOT_TOKEN` never appear in
+`docker inspect`, the Compose file, or process listings.
+
+**Secrets-file support (settings layer):** the app accepts
+`API_KEY_FILE` and `TELEGRAM_BOT_TOKEN_FILE`. When set, the file (UTF-8,
+trailing whitespace stripped) is read at startup and its content becomes the
+secret value.
+
+- **Precedence:** a configured `*_FILE` wins; the direct variable
+  (`API_KEY` / `TELEGRAM_BOT_TOKEN`) is used when the `_FILE` variant is
+  unset. Direct env values keep working unchanged.
+- **Failure mode:** a missing or unreadable file is a clear startup error
+  naming the path — no silent fallback to a placeholder.
+- **No leaks:** values are loaded into `SecretStr` fields; file contents
+  never enter logs or reprs.
+
+**Deploy steps (TrueNAS host):**
+
+1. Prepare secret files on a host dataset readable only by the operator
+   (e.g. `chmod 600 /path/to/secrets/api_key`), one secret per file, no
+   trailing newline required (it is stripped).
+2. Edit `docker-compose.truenas.yml`: replace the `/path/to/secrets/...`
+   file paths and the `/path/to/universal-publishing-platform/config`
+   dataset path (see the `EDIT:` comments in the file).
+3. `docker network create platform-net` (or point `name:` at an existing
+   user-created network).
+4. Run migrations one-off from the same image with the same volume and
+   environment: `docker compose -f docker-compose.truenas.yml run --rm app
+   alembic upgrade head`.
+5. Apply the Compose YAML in the Custom App editor and start; health is
+   `GET /health` (unauthenticated).
+
+### 5.2 Environment without secrets files
+
+If you prefer not to use docker secrets, all variables from §2 — including
+`API_KEY` and `TELEGRAM_BOT_TOKEN` — still work through the Custom App's
+environment configuration, identical to standalone Docker.
+
 ## 6. Operational notes
 
 - **Replicas:** version 1 supports a single app process (SQLite,

@@ -1,0 +1,64 @@
+# TrueNAS SCALE Custom App deployment for the Universal Publishing Platform
+# (specification §15; see docs/DEPLOYMENT.md §5).
+#
+# Secrets model: API_KEY and TELEGRAM_BOT_TOKEN are supplied as docker
+# secrets mounted from files on the TrueNAS host; the app reads them at
+# startup through API_KEY_FILE / TELEGRAM_BOT_TOKEN_FILE (see
+# src/publisher/core/config.py). No secret values appear in this file, in
+# `docker inspect`, or in logs.
+#
+# Before applying the app, replace every /path/to/... placeholder below
+# with real paths on YOUR TrueNAS host:
+#   1. /path/to/secrets/api_key                  — file containing the API key
+#   2. /path/to/secrets/telegram_bot_token       — file containing the bot token
+#   3. /path/to/universal-publishing-platform/config — persistent dataset
+#      for the SQLite database and application state (mounted at /app/data)
+# The external network `platform-net` must exist:
+#   docker network create platform-net
+# Migrations run as a one-off container from the same image BEFORE the app
+# starts (see docs/DEPLOYMENT.md §5.5).
+
+services:
+  app:
+    image: ghcr.io/ilinyh-org/universal-publishing-platform:latest
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8000"
+      DATA_DIR: /app/data
+      API_KEY_FILE: /run/secrets/api_key
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+    ports:
+      # host:container — the container side follows APP_PORT (default 8000).
+      - "8000:8000"
+    restart: unless-stopped
+    stop_grace_period: 60s
+    secrets:
+      - api_key
+      - telegram_bot_token
+    volumes:
+      # Persistent SQLite database and application state (specification §15).
+      - app-data:/app/data
+    networks:
+      - platform
+
+secrets:
+  api_key:
+    # EDIT: real path to the file containing the API key on the TrueNAS host.
+    file: /path/to/secrets/api_key
+  telegram_bot_token:
+    # EDIT: real path to the file containing the Telegram bot token.
+    file: /path/to/secrets/telegram_bot_token
+
+networks:
+  platform:
+    external: true
+    name: platform-net
+
+volumes:
+  app-data:
+    # EDIT: bind to the persistent dataset for this app's config/state.
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /path/to/universal-publishing-platform/config

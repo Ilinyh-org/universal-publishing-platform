@@ -12,6 +12,23 @@ from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def read_secret_file(path_text: str) -> str:
+    """Read a mounted secret file (UTF-8) and strip trailing whitespace.
+
+    Docker/TrueNAS secret mounts are the target use case. Raises a clear
+    error naming the path when the file is missing or unreadable — never
+    falls back to a placeholder value.
+    """
+    path = Path(path_text)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"secret file could not be read: {path} ({exc.__class__.__name__})"
+        ) from exc
+    return text.rstrip()
+
+
 class Settings(BaseSettings):
     """All operational settings, loaded from the environment or a `.env` file."""
 
@@ -24,6 +41,12 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("/app/data")
     database_url: str = "sqlite+aiosqlite:////app/data/publisher.db"
+
+    # File-based secret variants (docker/TrueNAS secret mounts). When set,
+    # the file is read at startup and its (stripped) content is used as the
+    # secret value, taking precedence over the direct variable.
+    api_key_file: str | None = None
+    telegram_bot_token_file: str | None = None
 
     api_key: SecretStr | None = None
 
@@ -40,6 +63,19 @@ class Settings(BaseSettings):
     stale_publishing_timeout_seconds: int = 900
 
     telegram_bot_token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def _resolve_secret_files(self) -> Settings:
+        """Load secret values from *_FILE paths when configured.
+
+        Precedence: `*_FILE` wins when set; the direct variable is used
+        otherwise (explicit, documented in DEPLOYMENT.md).
+        """
+        if self.api_key_file:
+            self.api_key = SecretStr(read_secret_file(self.api_key_file))
+        if self.telegram_bot_token_file:
+            self.telegram_bot_token = SecretStr(read_secret_file(self.telegram_bot_token_file))
+        return self
 
     @model_validator(mode="after")
     def _sane_numbers(self) -> Settings:
